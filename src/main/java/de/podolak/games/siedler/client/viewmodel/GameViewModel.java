@@ -10,6 +10,7 @@ import java.beans.PropertyChangeSupport;
 public final class GameViewModel {
     private final PropertyChangeSupport propertyChangeSupport = new PropertyChangeSupport(this);
     private volatile GameStateSnapshot snapshot;
+    private volatile String localPlayerId;
 
     public GameStateSnapshot snapshot() {
         return snapshot;
@@ -23,5 +24,13 @@ public final class GameViewModel {
 
     public void addSnapshotListener(PropertyChangeListener listener) {
         propertyChangeSupport.addPropertyChangeListener("snapshot", listener);
+    }
+
+    public String localPlayerId() {
+        return localPlayerId;
+    }
+
+    public void setLocalPlayerId(String localPlayerId) {
+        this.localPlayerId = localPlayerId;
     }
 }

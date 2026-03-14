@@ -35,6 +35,20 @@ public final class WorldGenerator {
         return new WorldSnapshot(0, dimensions, tiles, nodes, List.of(), List.of());
     }
 
+    public static List<TileCoordinate> createStartPositions(MapDimensions dimensions) {
+        int marginX = Math.max(2, dimensions.width() / 10);
+        int marginY = Math.max(2, dimensions.height() / 10);
+        int maxX = dimensions.width() - 1;
+        int maxY = dimensions.height() - 1;
+
+        return List.of(
+                new TileCoordinate(marginX, marginY),
+                new TileCoordinate(Math.max(0, maxX - marginX), marginY),
+                new TileCoordinate(marginX, Math.max(0, maxY - marginY)),
+                new TileCoordinate(Math.max(0, maxX - marginX), Math.max(0, maxY - marginY))
+        );
+    }
+
     private static TerrainType terrainFor(int x, int y) {
         if (x == 0 || y == 0 || x % 11 == 0) {
             return TerrainType.WATER;

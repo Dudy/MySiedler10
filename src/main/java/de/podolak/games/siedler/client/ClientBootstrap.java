@@ -35,6 +35,7 @@ public final class ClientBootstrap implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         SessionBootstrap bootstrap = bootstrapSession();
+        gameViewModel.setLocalPlayerId(bootstrap.playerId());
         gameViewModel.updateSnapshot(bootstrap.snapshot());
         SwingUtilities.invokeLater(() -> new GameFrame(gameViewModel).showWindow());
         gameUpdateSubscriber.subscribe(bootstrap.gameId(), message -> gameViewModel.updateSnapshot(message.snapshot()));
@@ -43,13 +44,17 @@ public final class ClientBootstrap implements ApplicationRunner {
     private SessionBootstrap bootstrapSession() {
         if (properties.getGameId() == null || properties.getGameId().isBlank()) {
             CreateGameResponse response = serverApiClient.createGame();
-            return new SessionBootstrap(response.gameId(), response.snapshot());
+            return new SessionBootstrap(response.gameId(), response.playerId(), response.snapshot());
         }
 
         JoinGameResponse response = serverApiClient.joinGame(properties.getGameId());
-        return new SessionBootstrap(response.gameId(), response.snapshot());
+        return new SessionBootstrap(response.gameId(), response.playerId(), response.snapshot());
     }
 
-    private record SessionBootstrap(String gameId, de.podolak.games.siedler.shared.model.GameStateSnapshot snapshot) {
+    private record SessionBootstrap(
+            String gameId,
+            String playerId,
+            de.podolak.games.siedler.shared.model.GameStateSnapshot snapshot
+    ) {
     }
 }

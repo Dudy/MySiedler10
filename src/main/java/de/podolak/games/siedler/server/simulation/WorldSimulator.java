@@ -1,8 +1,10 @@
 package de.podolak.games.siedler.server.simulation;
 
 import de.podolak.games.siedler.shared.command.PlayerCommand;
+import de.podolak.games.siedler.shared.model.BuildingState;
 import de.podolak.games.siedler.shared.model.WorldSnapshot;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public final class WorldSimulator {
@@ -25,6 +27,19 @@ public final class WorldSimulator {
                 currentWorld.terrainTiles(),
                 currentWorld.resourceNodes(),
                 currentWorld.buildings(),
+                currentWorld.roads()
+        );
+    }
+
+    public synchronized void addBuilding(BuildingState buildingState) {
+        List<BuildingState> buildings = new ArrayList<>(currentWorld.buildings());
+        buildings.add(buildingState);
+        currentWorld = new WorldSnapshot(
+                currentWorld.tick(),
+                currentWorld.dimensions(),
+                currentWorld.terrainTiles(),
+                currentWorld.resourceNodes(),
+                List.copyOf(buildings),
                 currentWorld.roads()
         );
     }

@@ -6,6 +6,6 @@ public record GameConfig(
         MapDimensions mapDimensions
 ) {
     public static GameConfig defaultConfig() {
-        return new GameConfig(4, 200, new MapDimensions(24, 16));
+        return new GameConfig(4, 200, new MapDimensions(1000, 1000));
     }
 }
