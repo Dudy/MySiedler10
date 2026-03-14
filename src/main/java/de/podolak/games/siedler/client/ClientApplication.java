@@ -1,17 +1,15 @@
 package de.podolak.games.siedler.client;
 
-import de.podolak.games.siedler.client.net.LocalLoopbackServerApiClient;
-import de.podolak.games.siedler.client.ui.GameFrame;
-import de.podolak.games.siedler.client.viewmodel.GameViewModel;
+import org.springframework.boot.WebApplicationType;
+import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
 
-import javax.swing.SwingUtilities;
-
-public final class ClientApplication {
-    private ClientApplication() {
-    }
-
+@SpringBootApplication(scanBasePackages = "de.podolak.games.siedler.client")
+public class ClientApplication {
     public static void main(String[] args) {
-        GameViewModel viewModel = new GameViewModel(new LocalLoopbackServerApiClient());
-        SwingUtilities.invokeLater(() -> new GameFrame(viewModel).showWindow());
+        new SpringApplicationBuilder(ClientApplication.class)
+                .headless(false)
+                .web(WebApplicationType.NONE)
+                .run(args);
     }
 }

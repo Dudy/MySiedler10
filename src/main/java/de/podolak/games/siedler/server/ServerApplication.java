@@ -1,19 +1,11 @@
 package de.podolak.games.siedler.server;
 
-import de.podolak.games.siedler.server.api.GameRestApi;
-import de.podolak.games.siedler.server.api.InMemoryGameRestApi;
-import de.podolak.games.siedler.server.game.GameServer;
-import de.podolak.games.siedler.server.transport.LoggingWebSocketPublisher;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
 
-public final class ServerApplication {
-    private ServerApplication() {
-    }
-
+@SpringBootApplication(scanBasePackages = "de.podolak.games.siedler.server")
+public class ServerApplication {
     public static void main(String[] args) {
-        GameServer gameServer = new GameServer(new LoggingWebSocketPublisher());
-        GameRestApi api = new InMemoryGameRestApi(gameServer);
-        System.out.println("Siedler server architecture bootstrap started.");
-        System.out.println("REST API implementation: " + api.getClass().getSimpleName());
-        gameServer.start();
+        SpringApplication.run(ServerApplication.class, args);
     }
 }

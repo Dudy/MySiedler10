@@ -1,18 +1,23 @@
 package de.podolak.games.siedler.server.game;
 
-import de.podolak.games.siedler.server.simulation.SimulationTicker;
 import de.podolak.games.siedler.server.transport.WorldUpdatePublisher;
 import de.podolak.games.siedler.shared.model.GameConfig;
+import org.springframework.scheduling.TaskScheduler;
+import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+@Service
 public final class GameServer {
     private final Map<String, GameSession> sessions = new ConcurrentHashMap<>();
     private final WorldUpdatePublisher updatePublisher;
+    private final TaskScheduler taskScheduler;
 
-    public GameServer(WorldUpdatePublisher updatePublisher) {
+    public GameServer(WorldUpdatePublisher updatePublisher, TaskScheduler taskScheduler) {
         this.updatePublisher = updatePublisher;
+        this.taskScheduler = taskScheduler;
     }
 
     public void start() {
@@ -22,7 +27,7 @@ public final class GameServer {
     public GameSession createSession(String hostPlayerName, GameConfig config) {
         GameSession session = GameSession.create(hostPlayerName, config, updatePublisher);
         sessions.put(session.gameId(), session);
-        new SimulationTicker(session).start();
+        taskScheduler.scheduleAtFixedRate(session::advanceOneTick, Duration.ofMillis(config.tickDurationMillis()));
         return session;
     }
 
