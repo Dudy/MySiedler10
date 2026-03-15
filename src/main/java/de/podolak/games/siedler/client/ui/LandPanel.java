@@ -27,6 +27,7 @@ import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.Toolkit;
+import java.awt.geom.AffineTransform;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
@@ -37,6 +38,8 @@ public final class LandPanel extends JPanel {
 
     private static final int HEX_SIZE = 18;
     private static final int INFLUENCE_RADIUS = 3;
+    private static final double MIN_ZOOM = 1.0;
+    private static final double MAX_ZOOM = 5.0;
     private static final double HEX_WIDTH = Math.sqrt(3) * HEX_SIZE;
     private static final double HEX_HEIGHT = 2.0 * HEX_SIZE;
     private static final double HORIZONTAL_SPACING = HEX_WIDTH;
@@ -50,6 +53,7 @@ public final class LandPanel extends JPanel {
     private volatile TileCoordinate selectedBuildingTile;
     private volatile PlacementListener placementListener;
     private volatile BuildingSelectionListener buildingSelectionListener;
+    private volatile double zoomLevel = MIN_ZOOM;
 
     public LandPanel(GameViewModel viewModel) {
         this.viewModel = viewModel;
@@ -135,12 +139,17 @@ public final class LandPanel extends JPanel {
 
         Graphics2D graphics2D = (Graphics2D) graphics.create();
         graphics2D.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        Rectangle viewClip = graphics2D.getClipBounds();
+        Rectangle worldClip = toWorldClip(viewClip);
+        AffineTransform originalTransform = graphics2D.getTransform();
+        graphics2D.scale(zoomLevel, zoomLevel);
 
         WorldSnapshot world = snapshot.world();
-        drawVisibleTiles(graphics2D, world);
+        drawVisibleTiles(graphics2D, world, worldClip);
         drawInfluenceArea(graphics2D, world);
         drawHoveredTile(graphics2D, world);
-        drawBuildings(graphics2D, world);
+        graphics2D.setTransform(originalTransform);
+        drawBuildings(graphics2D, world, viewClip);
 
         graphics2D.dispose();
     }
@@ -156,6 +165,22 @@ public final class LandPanel extends JPanel {
             notifyBuildingSelection(null);
         }
         repaint();
+    }
+
+    public double zoomLevel() {
+        return zoomLevel;
+    }
+
+    public double setZoomLevel(double requestedZoomLevel) {
+        double clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, requestedZoomLevel));
+        if (Math.abs(clamped - zoomLevel) < 0.0001) {
+            return zoomLevel;
+        }
+        zoomLevel = clamped;
+        updatePreferredSize(viewModel.snapshot());
+        repaint();
+        log.debug("Zoom changed to {}", zoomLevel);
+        return zoomLevel;
     }
 
     public void setPlacementListener(PlacementListener placementListener) {
@@ -176,15 +201,28 @@ public final class LandPanel extends JPanel {
         setCursor(buildCursor);
     }
 
-    private void drawBuildings(Graphics2D graphics2D, WorldSnapshot world) {
+    private void drawBuildings(Graphics2D graphics2D, WorldSnapshot world, Rectangle viewClip) {
         for (BuildingState building : world.buildings()) {
             String marker = markerFor(building.buildingType());
             if (marker == null) {
                 continue;
             }
 
-            Point center = tileCenterPixels(building.coordinate().x(), building.coordinate().y());
-            drawMarkerWithOutline(graphics2D, marker, center, fontSizeFor(building.buildingType()));
+            Point baseCenter = tileCenterPixels(building.coordinate().x(), building.coordinate().y());
+            Point scaledCenter = new Point(
+                    (int) Math.round(baseCenter.x * zoomLevel),
+                    (int) Math.round(baseCenter.y * zoomLevel)
+            );
+            if (viewClip != null && !viewClip.contains(scaledCenter)) {
+                int margin = 80;
+                if (scaledCenter.x < viewClip.x - margin || scaledCenter.x > viewClip.x + viewClip.width + margin
+                        || scaledCenter.y < viewClip.y - margin || scaledCenter.y > viewClip.y + viewClip.height + margin) {
+                    continue;
+                }
+            }
+
+            int scaledFontSize = Math.max(12, (int) Math.round(fontSizeFor(building.buildingType()) * zoomLevel));
+            drawMarkerWithOutline(graphics2D, marker, scaledCenter, scaledFontSize);
         }
     }
 
@@ -244,12 +282,7 @@ public final class LandPanel extends JPanel {
         }
     }
 
-    private void drawVisibleTiles(Graphics2D graphics2D, WorldSnapshot world) {
-        Rectangle clip = graphics2D.getClipBounds();
-        if (clip == null) {
-            clip = new Rectangle(0, 0, getWidth(), getHeight());
-        }
-
+    private void drawVisibleTiles(Graphics2D graphics2D, WorldSnapshot world, Rectangle clip) {
         int width = world.dimensions().width();
         int height = world.dimensions().height();
         List<TerrainTile> tiles = world.terrainTiles();
@@ -285,6 +318,21 @@ public final class LandPanel extends JPanel {
             }
         }
         return TerrainType.GRASSLAND;
+    }
+
+    private Rectangle toWorldClip(Rectangle viewClip) {
+        if (viewClip == null) {
+            return new Rectangle(0, 0, getWidth(), getHeight());
+        }
+        if (zoomLevel <= 0.0) {
+            return new Rectangle(viewClip);
+        }
+        return new Rectangle(
+                (int) Math.floor(viewClip.x / zoomLevel),
+                (int) Math.floor(viewClip.y / zoomLevel),
+                (int) Math.ceil(viewClip.width / zoomLevel),
+                (int) Math.ceil(viewClip.height / zoomLevel)
+        );
     }
 
     private Polygon createHex(int x, int y) {
@@ -325,6 +373,11 @@ public final class LandPanel extends JPanel {
         if (snapshot == null) {
             return null;
         }
+        if (zoomLevel <= 0.0) {
+            return null;
+        }
+        int baseX = (int) Math.round(point.x / zoomLevel);
+        int baseY = (int) Math.round(point.y / zoomLevel);
 
         int width = snapshot.world().dimensions().width();
         int height = snapshot.world().dimensions().height();
@@ -332,12 +385,12 @@ public final class LandPanel extends JPanel {
             return null;
         }
 
-        int approxY = clamp((int) Math.round((point.y - HEX_SIZE) / VERTICAL_SPACING), 0, height - 1);
+        int approxY = clamp((int) Math.round((baseY - HEX_SIZE) / VERTICAL_SPACING), 0, height - 1);
         for (int y = Math.max(0, approxY - 2); y <= Math.min(height - 1, approxY + 2); y++) {
             double rowOffset = (y % 2) * (HEX_WIDTH / 2.0);
-            int approxX = clamp((int) Math.round((point.x - (HEX_WIDTH / 2.0) - rowOffset) / HORIZONTAL_SPACING), 0, width - 1);
+            int approxX = clamp((int) Math.round((baseX - (HEX_WIDTH / 2.0) - rowOffset) / HORIZONTAL_SPACING), 0, width - 1);
             for (int x = Math.max(0, approxX - 2); x <= Math.min(width - 1, approxX + 2); x++) {
-                if (createHex(x, y).contains(point)) {
+                if (createHex(x, y).contains(baseX, baseY)) {
                     return new TileCoordinate(x, y);
                 }
             }
@@ -512,8 +565,10 @@ public final class LandPanel extends JPanel {
         }
         WorldSnapshot world = snapshot.world();
 
-        int width = (int) Math.ceil(HEX_WIDTH * world.dimensions().width() + HEX_WIDTH / 2.0);
-        int height = (int) Math.ceil(HEX_SIZE + VERTICAL_SPACING * Math.max(0, world.dimensions().height() - 1) + HEX_SIZE);
+        double baseWidth = HEX_WIDTH * world.dimensions().width() + HEX_WIDTH / 2.0;
+        double baseHeight = HEX_SIZE + VERTICAL_SPACING * Math.max(0, world.dimensions().height() - 1) + HEX_SIZE;
+        int width = (int) Math.ceil(baseWidth * zoomLevel);
+        int height = (int) Math.ceil(baseHeight * zoomLevel);
 
         setPreferredSize(new Dimension(width, height));
         revalidate();

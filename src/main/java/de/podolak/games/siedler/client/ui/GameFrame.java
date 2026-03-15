@@ -29,6 +29,8 @@ import java.awt.KeyboardFocusManager;
 import java.awt.Point;
 import java.awt.Window;
 import java.awt.event.KeyEvent;
+import java.awt.event.MouseWheelEvent;
+import java.awt.event.MouseWheelListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.Optional;
@@ -73,6 +75,10 @@ public final class GameFrame {
         frame.add(resourcesLabel, BorderLayout.NORTH);
         frame.add(scrollPane, BorderLayout.CENTER);
         frame.add(createRibbonPanel(), BorderLayout.SOUTH);
+        MouseWheelListener zoomListener = createZoomListener();
+        scrollPane.addMouseWheelListener(zoomListener);
+        scrollPane.getViewport().addMouseWheelListener(zoomListener);
+        landPanel.addMouseWheelListener(zoomListener);
 
         horizontalStep = LandPanel.horizontalStepPixels();
         verticalStep = LandPanel.verticalStepPixels();
@@ -178,6 +184,38 @@ public final class GameFrame {
         }
         buildingButtonGroup.clearSelection();
         selectBuildingType(null);
+    }
+
+    private MouseWheelListener createZoomListener() {
+        return event -> {
+            double currentZoom = landPanel.zoomLevel();
+            double factor = event.getWheelRotation() < 0 ? 1.12 : 1.0 / 1.12;
+            double targetZoom = currentZoom * factor;
+            double newZoom = landPanel.setZoomLevel(targetZoom);
+            if (Math.abs(newZoom - currentZoom) < 0.0001) {
+                return;
+            }
+
+            Point mouse = event.getPoint();
+            Point viewportPoint = SwingUtilities.convertPoint(event.getComponent(), mouse, scrollPane.getViewport());
+            Point currentViewPosition = scrollPane.getViewport().getViewPosition();
+            double worldX = (currentViewPosition.x + viewportPoint.x) / currentZoom;
+            double worldY = (currentViewPosition.y + viewportPoint.y) / currentZoom;
+
+            int targetX = (int) Math.round(worldX * newZoom - viewportPoint.x);
+            int targetY = (int) Math.round(worldY * newZoom - viewportPoint.y);
+
+            Dimension extent = scrollPane.getViewport().getExtentSize();
+            Dimension viewSize = landPanel.getPreferredSize();
+            int maxX = Math.max(0, viewSize.width - extent.width);
+            int maxY = Math.max(0, viewSize.height - extent.height);
+
+            targetX = Math.max(0, Math.min(maxX, targetX));
+            targetY = Math.max(0, Math.min(maxY, targetY));
+            scrollPane.getViewport().setViewPosition(new Point(targetX, targetY));
+            event.consume();
+            log.debug("Zoom event old={} new={} at={},{}", currentZoom, newZoom, targetX, targetY);
+        };
     }
 
     private void updateResourcesLabel() {
