@@ -213,6 +213,7 @@ public final class GameFrame {
             targetX = Math.max(0, Math.min(maxX, targetX));
             targetY = Math.max(0, Math.min(maxY, targetY));
             scrollPane.getViewport().setViewPosition(new Point(targetX, targetY));
+            scrollPane.getViewport().repaint();
             event.consume();
             log.debug("Zoom event old={} new={} at={},{}", currentZoom, newZoom, targetX, targetY);
         };

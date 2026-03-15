@@ -27,7 +27,6 @@ import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.Toolkit;
-import java.awt.geom.AffineTransform;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
@@ -141,16 +140,13 @@ public final class LandPanel extends JPanel {
         graphics2D.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         Rectangle viewClip = graphics2D.getClipBounds();
         Rectangle worldClip = toWorldClip(viewClip);
-        AffineTransform originalTransform = graphics2D.getTransform();
         graphics2D.scale(zoomLevel, zoomLevel);
 
         WorldSnapshot world = snapshot.world();
         drawVisibleTiles(graphics2D, world, worldClip);
         drawInfluenceArea(graphics2D, world);
         drawHoveredTile(graphics2D, world);
-        graphics2D.setTransform(originalTransform);
-        drawBuildings(graphics2D, world, viewClip);
-
+        drawBuildings(graphics2D, world);
         graphics2D.dispose();
     }
 
@@ -178,7 +174,7 @@ public final class LandPanel extends JPanel {
         }
         zoomLevel = clamped;
         updatePreferredSize(viewModel.snapshot());
-        repaint();
+        repaint(0, 0, getWidth(), getHeight());
         log.debug("Zoom changed to {}", zoomLevel);
         return zoomLevel;
     }
@@ -201,28 +197,15 @@ public final class LandPanel extends JPanel {
         setCursor(buildCursor);
     }
 
-    private void drawBuildings(Graphics2D graphics2D, WorldSnapshot world, Rectangle viewClip) {
+    private void drawBuildings(Graphics2D graphics2D, WorldSnapshot world) {
         for (BuildingState building : world.buildings()) {
             String marker = markerFor(building.buildingType());
             if (marker == null) {
                 continue;
             }
 
-            Point baseCenter = tileCenterPixels(building.coordinate().x(), building.coordinate().y());
-            Point scaledCenter = new Point(
-                    (int) Math.round(baseCenter.x * zoomLevel),
-                    (int) Math.round(baseCenter.y * zoomLevel)
-            );
-            if (viewClip != null && !viewClip.contains(scaledCenter)) {
-                int margin = 80;
-                if (scaledCenter.x < viewClip.x - margin || scaledCenter.x > viewClip.x + viewClip.width + margin
-                        || scaledCenter.y < viewClip.y - margin || scaledCenter.y > viewClip.y + viewClip.height + margin) {
-                    continue;
-                }
-            }
-
-            int scaledFontSize = Math.max(12, (int) Math.round(fontSizeFor(building.buildingType()) * zoomLevel));
-            drawMarkerWithOutline(graphics2D, marker, scaledCenter, scaledFontSize);
+            Point center = tileCenterPixels(building.coordinate().x(), building.coordinate().y());
+            drawMarkerWithOutline(graphics2D, marker, center, fontSizeFor(building.buildingType()));
         }
     }
 
