@@ -10,6 +10,7 @@ public class ClientApplication {
         new SpringApplicationBuilder(ClientApplication.class)
                 .headless(false)
                 .web(WebApplicationType.NONE)
+                .profiles("client")
                 .run(args);
     }
 }

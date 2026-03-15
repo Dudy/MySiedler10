@@ -4,6 +4,8 @@ public record PlayerState(
         String playerId,
         String displayName,
         PlayerColor color,
-        boolean connected
+        boolean connected,
+        int wood,
+        int stone
 ) {
 }
