@@ -53,6 +53,7 @@ public final class LandPanel extends JPanel {
     private static final double VERTICAL_SPACING = HEX_HEIGHT * 0.75;
 
     private final GameViewModel viewModel;
+    private final HexTileSpriteFactory tileSpriteFactory;
     private final Cursor defaultCursor;
     private final Cursor buildCursor;
     private volatile BuildingType selectedBuildingType;
@@ -71,6 +72,7 @@ public final class LandPanel extends JPanel {
 
     public LandPanel(GameViewModel viewModel) {
         this.viewModel = viewModel;
+        this.tileSpriteFactory = new HexTileSpriteFactory(HEX_SIZE, HEX_WIDTH, HEX_HEIGHT);
         this.defaultCursor = getCursor();
         this.buildCursor = createBuildCursor();
         setBackground(new Color(35, 44, 29));
@@ -432,11 +434,8 @@ public final class LandPanel extends JPanel {
 
             for (int x = minX; x <= maxX; x++) {
                 TerrainType terrainType = terrainTypeAt(tiles, indexedGrid, width, x, y);
-                Polygon hex = createHex(x, y);
-                graphics2D.setColor(colorFor(terrainType));
-                graphics2D.fillPolygon(hex);
-                graphics2D.setColor(new Color(0, 0, 0, 35));
-                graphics2D.drawPolygon(hex);
+                Point center = tileCenterPixels(x, y);
+                tileSpriteFactory.paintTile(graphics2D, terrainType, x, y, center);
             }
         }
     }
@@ -860,16 +859,6 @@ public final class LandPanel extends JPanel {
 
         setPreferredSize(new Dimension(width, height));
         revalidate();
-    }
-
-    private Color colorFor(TerrainType terrainType) {
-        return switch (terrainType) {
-            case GRASSLAND -> new Color(108, 153, 74);
-            case FOREST -> new Color(52, 102, 55);
-            case MOUNTAIN -> new Color(132, 132, 132);
-            case WATER -> new Color(66, 120, 191);
-            case SAND -> new Color(217, 197, 128);
-        };
     }
 
     private int clamp(int value, int min, int max) {
