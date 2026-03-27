@@ -8,6 +8,9 @@ import de.podolak.games.siedler.shared.model.BuildingState;
 import de.podolak.games.siedler.shared.model.BuildingType;
 import de.podolak.games.siedler.shared.model.GameStateSnapshot;
 import de.podolak.games.siedler.shared.model.PlayerState;
+import de.podolak.games.siedler.shared.model.RoadRules;
+import de.podolak.games.siedler.shared.model.RoadState;
+import de.podolak.games.siedler.shared.model.RoadVertexCoordinate;
 import de.podolak.games.siedler.shared.model.TileCoordinate;
 import de.podolak.games.siedler.shared.model.TerrainTile;
 import de.podolak.games.siedler.shared.model.TerrainType;
@@ -135,6 +138,52 @@ public final class GameViewModel {
         return true;
     }
 
+    public boolean buildRoad(List<RoadVertexCoordinate> path) {
+        if (path == null || path.size() < 2) {
+            log.warn("buildRoad ignored reason=missing_or_short_path");
+            return false;
+        }
+        GameStateSnapshot activeSnapshot = snapshot;
+        String playerId = localPlayerId;
+        if (activeSnapshot == null || playerId == null || playerId.isBlank()) {
+            log.warn(
+                    "buildRoad ignored reason=missing_context hasSnapshot={} playerId={}",
+                    activeSnapshot != null,
+                    playerId
+            );
+            return false;
+        }
+        List<RoadVertexCoordinate> normalizedPath = List.copyOf(path);
+        if (!RoadRules.isValidRoadPath(activeSnapshot.world().dimensions(), activeSnapshot.world().roads(), normalizedPath)) {
+            log.info(
+                    "buildRoad local validation failed gameId={} playerId={} vertices={}",
+                    activeSnapshot.gameId(),
+                    playerId,
+                    normalizedPath.size()
+            );
+            return false;
+        }
+
+        PlayerCommand command = new PlayerCommand(
+                UUID.randomUUID().toString(),
+                activeSnapshot.gameId(),
+                playerId,
+                CommandType.BUILD_ROAD,
+                encodeRoadPayload(normalizedPath),
+                Instant.now()
+        );
+        updateSnapshot(createOptimisticRoadSnapshot(activeSnapshot, playerId, normalizedPath));
+        log.info(
+                "buildRoad optimistic update applied gameId={} playerId={} vertices={}",
+                activeSnapshot.gameId(),
+                playerId,
+                normalizedPath.size()
+        );
+        serverApiClient.submit(command);
+        log.info("buildRoad command submitted commandId={}", command.commandId());
+        return true;
+    }
+
     private boolean canPlaceBuilding(
             GameStateSnapshot activeSnapshot,
             String playerId,
@@ -244,6 +293,48 @@ public final class GameViewModel {
                 List.copyOf(players),
                 updatedWorld
         );
+    }
+
+    private GameStateSnapshot createOptimisticRoadSnapshot(
+            GameStateSnapshot activeSnapshot,
+            String playerId,
+            List<RoadVertexCoordinate> path
+    ) {
+        List<RoadState> roads = new ArrayList<>(activeSnapshot.world().roads());
+        roads.add(new RoadState(
+                "pending-road-" + UUID.randomUUID(),
+                playerId,
+                path
+        ));
+
+        WorldSnapshot world = activeSnapshot.world();
+        WorldSnapshot updatedWorld = new WorldSnapshot(
+                world.tick(),
+                world.dimensions(),
+                world.terrainTiles(),
+                world.resourceNodes(),
+                world.buildings(),
+                List.copyOf(roads)
+        );
+
+        return new GameStateSnapshot(
+                activeSnapshot.gameId(),
+                activeSnapshot.serverTime(),
+                activeSnapshot.config(),
+                activeSnapshot.players(),
+                updatedWorld
+        );
+    }
+
+    private Map<String, String> encodeRoadPayload(List<RoadVertexCoordinate> path) {
+        Map<String, String> payload = new java.util.LinkedHashMap<>();
+        payload.put("vertexCount", Integer.toString(path.size()));
+        for (int i = 0; i < path.size(); i++) {
+            RoadVertexCoordinate vertex = path.get(i);
+            payload.put("vx" + i, Integer.toString(vertex.x()));
+            payload.put("vy" + i, Integer.toString(vertex.y()));
+        }
+        return Map.copyOf(payload);
     }
 
     private PlayerState localPlayer(GameStateSnapshot activeSnapshot, String playerId) {

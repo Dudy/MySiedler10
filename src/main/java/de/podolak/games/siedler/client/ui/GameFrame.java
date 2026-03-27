@@ -20,6 +20,7 @@ import javax.swing.JPanel;
 import javax.swing.JRadioButton;
 import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
+import javax.swing.JToggleButton;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
@@ -27,6 +28,7 @@ import java.awt.Font;
 import java.awt.KeyEventDispatcher;
 import java.awt.KeyboardFocusManager;
 import java.awt.Point;
+import java.awt.Rectangle;
 import java.awt.Window;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseWheelEvent;
@@ -48,6 +50,9 @@ public final class GameFrame {
     private final JLabel buildingCostLabel;
     private final JLabel buildingYieldLabel;
     private final ButtonGroup buildingButtonGroup;
+    private final JToggleButton roadModeToggle;
+    private final JButton finishRoadButton;
+    private final JButton cancelRoadButton;
     private final int horizontalStep;
     private final int verticalStep;
     private volatile boolean centeredOnHeadquarters;
@@ -64,19 +69,23 @@ public final class GameFrame {
 
         landPanel = new LandPanel(viewModel);
         scrollPane = new JScrollPane(landPanel);
+        scrollPane.setWheelScrollingEnabled(false);
 
         selectedBuildingLabel = new JLabel("Kein Gebaeude gewaehlt");
         buildingCostLabel = new JLabel("Kosten: -");
         buildingYieldLabel = new JLabel("Ertrag: -");
         buildingButtonGroup = new ButtonGroup();
+        roadModeToggle = new JToggleButton("Wegebau AUS");
+        finishRoadButton = new JButton("Weg beenden");
+        cancelRoadButton = new JButton("Weg Abbrechen");
         landPanel.setPlacementListener(this::onBuildingPlaced);
         landPanel.setBuildingSelectionListener(this::onExistingBuildingSelected);
+        landPanel.setRoadBuildStateListener(this::onRoadBuildStateChanged);
 
         frame.add(resourcesLabel, BorderLayout.NORTH);
         frame.add(scrollPane, BorderLayout.CENTER);
         frame.add(createRibbonPanel(), BorderLayout.SOUTH);
         MouseWheelListener zoomListener = createZoomListener();
-        scrollPane.addMouseWheelListener(zoomListener);
         scrollPane.getViewport().addMouseWheelListener(zoomListener);
         landPanel.addMouseWheelListener(zoomListener);
 
@@ -111,6 +120,16 @@ public final class GameFrame {
         JPanel ribbon = new JPanel(new BorderLayout());
         ribbon.setBorder(BorderFactory.createEmptyBorder(8, 10, 10, 10));
 
+        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 4));
+        roadModeToggle.addActionListener(event -> setRoadBuildMode(roadModeToggle.isSelected()));
+        finishRoadButton.addActionListener(event -> landPanel.finishRoadBuild());
+        cancelRoadButton.addActionListener(event -> landPanel.cancelRoadBuild());
+        finishRoadButton.setEnabled(false);
+        cancelRoadButton.setEnabled(false);
+        left.add(roadModeToggle);
+        left.add(finishRoadButton);
+        left.add(cancelRoadButton);
+
         JPanel middle = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 4));
         JRadioButton lumberjackButton = createBuildingButton("Holzfaeller", BuildingType.LUMBERJACK);
         JRadioButton quarryButton = createBuildingButton("Steinbruch", BuildingType.QUARRY);
@@ -134,6 +153,7 @@ public final class GameFrame {
         details.add(buildingCostLabel);
         details.add(buildingYieldLabel);
 
+        ribbon.add(left, BorderLayout.WEST);
         ribbon.add(middle, BorderLayout.CENTER);
         ribbon.add(details, BorderLayout.EAST);
         return ribbon;
@@ -147,6 +167,9 @@ public final class GameFrame {
 
     private void selectBuildingType(BuildingType buildingType) {
         log.info("Ribbon select buildingType={}", buildingType);
+        if (buildingType != null && landPanel.isRoadBuildModeEnabled()) {
+            setRoadBuildMode(false);
+        }
         landPanel.setSelectedBuildingType(buildingType);
 
         if (buildingType == null) {
@@ -186,6 +209,23 @@ public final class GameFrame {
         selectBuildingType(null);
     }
 
+    private void onRoadBuildStateChanged(boolean roadBuildModeEnabled, boolean hasDraftRoad, boolean canFinishRoad) {
+        roadModeToggle.setSelected(roadBuildModeEnabled);
+        roadModeToggle.setText(roadBuildModeEnabled ? "Wegebau EIN" : "Wegebau AUS");
+        finishRoadButton.setEnabled(roadBuildModeEnabled && canFinishRoad);
+        cancelRoadButton.setEnabled(roadBuildModeEnabled && hasDraftRoad);
+    }
+
+    private void setRoadBuildMode(boolean enabled) {
+        roadModeToggle.setSelected(enabled);
+        roadModeToggle.setText(enabled ? "Wegebau EIN" : "Wegebau AUS");
+        if (enabled) {
+            buildingButtonGroup.clearSelection();
+            selectBuildingType(null);
+        }
+        landPanel.setRoadBuildModeEnabled(enabled);
+    }
+
     private MouseWheelListener createZoomListener() {
         return event -> {
             double currentZoom = landPanel.zoomLevel();
@@ -197,26 +237,98 @@ public final class GameFrame {
             }
 
             Point mouse = event.getPoint();
+            Point panelPoint = SwingUtilities.convertPoint(event.getComponent(), mouse, landPanel);
             Point viewportPoint = SwingUtilities.convertPoint(event.getComponent(), mouse, scrollPane.getViewport());
             Point currentViewPosition = scrollPane.getViewport().getViewPosition();
-            double worldX = (currentViewPosition.x + viewportPoint.x) / currentZoom;
-            double worldY = (currentViewPosition.y + viewportPoint.y) / currentZoom;
-
-            int targetX = (int) Math.round(worldX * newZoom - viewportPoint.x);
-            int targetY = (int) Math.round(worldY * newZoom - viewportPoint.y);
-
-            Dimension extent = scrollPane.getViewport().getExtentSize();
-            Dimension viewSize = landPanel.getPreferredSize();
-            int maxX = Math.max(0, viewSize.width - extent.width);
-            int maxY = Math.max(0, viewSize.height - extent.height);
-
-            targetX = Math.max(0, Math.min(maxX, targetX));
-            targetY = Math.max(0, Math.min(maxY, targetY));
-            scrollPane.getViewport().setViewPosition(new Point(targetX, targetY));
-            scrollPane.getViewport().repaint();
+            double worldX = panelPoint.x / currentZoom;
+            double worldY = panelPoint.y / currentZoom;
             event.consume();
-            log.debug("Zoom event old={} new={} at={},{}", currentZoom, newZoom, targetX, targetY);
+            applyZoomViewportPosition(
+                    event.getComponent().getClass().getSimpleName(),
+                    currentZoom,
+                    newZoom,
+                    mouse,
+                    panelPoint,
+                    viewportPoint,
+                    currentViewPosition,
+                    worldX,
+                    worldY
+            );
         };
+    }
+
+    private void applyZoomViewportPosition(
+            String sourceName,
+            double oldZoom,
+            double newZoom,
+            Point mouse,
+            Point panelPoint,
+            Point viewportPoint,
+            Point viewPosBefore,
+            double worldX,
+            double worldY
+    ) {
+        int targetX = (int) Math.round(worldX * newZoom - viewportPoint.x);
+        int targetY = (int) Math.round(worldY * newZoom - viewportPoint.y);
+
+        Dimension extent = scrollPane.getViewport().getExtentSize();
+        Dimension viewSize = landPanel.getPreferredSize();
+        scrollPane.getViewport().setViewSize(viewSize);
+        int maxX = Math.max(0, viewSize.width - extent.width);
+        int maxY = Math.max(0, viewSize.height - extent.height);
+
+        targetX = Math.max(0, Math.min(maxX, targetX));
+        targetY = Math.max(0, Math.min(maxY, targetY));
+        scrollPane.getViewport().setViewPosition(new Point(targetX, targetY));
+        scrollPane.getViewport().repaint();
+        logHeadquartersVisibility(newZoom);
+        log.debug(
+                "Zoom event source={} old={} new={} mouse={} panelPoint={} viewportPoint={} viewPosBefore={} viewPosAfter={},{} viewSize={} extent={}",
+                sourceName,
+                oldZoom,
+                newZoom,
+                mouse,
+                panelPoint,
+                viewportPoint,
+                viewPosBefore,
+                targetX,
+                targetY,
+                viewSize,
+                extent
+        );
+    }
+
+    private void logHeadquartersVisibility(double zoomLevel) {
+        String localPlayerId = viewModel.localPlayerId();
+        GameStateSnapshot snapshot = viewModel.snapshot();
+        if (localPlayerId == null || snapshot == null) {
+            return;
+        }
+        Optional<TileCoordinate> headquarters = snapshot.world().buildings().stream()
+                .filter(building -> building.buildingType() == BuildingType.HEADQUARTERS)
+                .filter(building -> localPlayerId.equals(building.ownerPlayerId()))
+                .map(BuildingState::coordinate)
+                .findFirst();
+        if (headquarters.isEmpty()) {
+            return;
+        }
+
+        Point worldCenter = LandPanel.tileCenterPixels(headquarters.get().x(), headquarters.get().y());
+        Point scaledCenter = new Point(
+                (int) Math.round(worldCenter.x * zoomLevel),
+                (int) Math.round(worldCenter.y * zoomLevel)
+        );
+        Point viewPosition = scrollPane.getViewport().getViewPosition();
+        Dimension extent = scrollPane.getViewport().getExtentSize();
+        Rectangle visibleRect = new Rectangle(viewPosition, extent);
+        log.debug(
+                "HQ visibility zoom={} worldCenter={} scaledCenter={} visibleRect={} inside={}",
+                zoomLevel,
+                worldCenter,
+                scaledCenter,
+                visibleRect,
+                visibleRect.contains(scaledCenter)
+        );
     }
 
     private void updateResourcesLabel() {

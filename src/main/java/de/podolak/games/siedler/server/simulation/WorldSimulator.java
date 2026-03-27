@@ -2,6 +2,7 @@ package de.podolak.games.siedler.server.simulation;
 
 import de.podolak.games.siedler.shared.command.PlayerCommand;
 import de.podolak.games.siedler.shared.model.BuildingState;
+import de.podolak.games.siedler.shared.model.RoadState;
 import de.podolak.games.siedler.shared.model.WorldSnapshot;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,6 +55,25 @@ public final class WorldSimulator {
                 currentWorld.resourceNodes(),
                 List.copyOf(buildings),
                 currentWorld.roads()
+        );
+    }
+
+    public synchronized void addRoad(RoadState roadState) {
+        log.info(
+                "WorldSimulator addRoad id={} owner={} vertices={}",
+                roadState.roadId(),
+                roadState.ownerPlayerId(),
+                roadState.path().size()
+        );
+        List<RoadState> roads = new ArrayList<>(currentWorld.roads());
+        roads.add(roadState);
+        currentWorld = new WorldSnapshot(
+                currentWorld.tick(),
+                currentWorld.dimensions(),
+                currentWorld.terrainTiles(),
+                currentWorld.resourceNodes(),
+                currentWorld.buildings(),
+                List.copyOf(roads)
         );
     }
 

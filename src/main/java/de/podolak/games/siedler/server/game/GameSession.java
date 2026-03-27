@@ -11,6 +11,9 @@ import de.podolak.games.siedler.shared.model.GameConfig;
 import de.podolak.games.siedler.shared.model.GameStateSnapshot;
 import de.podolak.games.siedler.shared.model.PlayerColor;
 import de.podolak.games.siedler.shared.model.PlayerState;
+import de.podolak.games.siedler.shared.model.RoadRules;
+import de.podolak.games.siedler.shared.model.RoadState;
+import de.podolak.games.siedler.shared.model.RoadVertexCoordinate;
 import de.podolak.games.siedler.shared.model.TerrainTile;
 import de.podolak.games.siedler.shared.model.TerrainType;
 import de.podolak.games.siedler.shared.model.TileCoordinate;
@@ -23,6 +26,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -175,6 +179,8 @@ public final class GameSession {
             }
             if (command.commandType() == de.podolak.games.siedler.shared.command.CommandType.PLACE_BUILDING) {
                 handlePlaceBuilding(command);
+            } else if (command.commandType() == de.podolak.games.siedler.shared.command.CommandType.BUILD_ROAD) {
+                handleBuildRoad(command);
             }
         }
     }
@@ -297,6 +303,58 @@ public final class GameSession {
         return -1;
     }
 
+    private void handleBuildRoad(PlayerCommand command) {
+        if (command.payload() == null) {
+            log.warn("BUILD_ROAD ignored gameId={} reason=missing_payload commandId={}", gameId, command.commandId());
+            return;
+        }
+        List<RoadVertexCoordinate> path = parseRoadPath(command.payload());
+        if (path.size() < 2) {
+            log.warn(
+                    "BUILD_ROAD rejected gameId={} playerId={} commandId={} reason=invalid_payload payload={}",
+                    gameId,
+                    command.playerId(),
+                    command.commandId(),
+                    command.payload()
+            );
+            return;
+        }
+        if (indexOfPlayer(command.playerId()) < 0) {
+            log.warn(
+                    "BUILD_ROAD rejected gameId={} playerId={} commandId={} reason=unknown_player",
+                    gameId,
+                    command.playerId(),
+                    command.commandId()
+            );
+            return;
+        }
+
+        WorldSnapshot world = simulator.snapshot();
+        if (!RoadRules.isValidRoadPath(world.dimensions(), world.roads(), path)) {
+            log.warn(
+                    "BUILD_ROAD rejected gameId={} playerId={} commandId={} reason=invalid_path vertices={}",
+                    gameId,
+                    command.playerId(),
+                    command.commandId(),
+                    path.size()
+            );
+            return;
+        }
+
+        simulator.addRoad(new RoadState(
+                "road-" + UUID.randomUUID(),
+                command.playerId(),
+                path
+        ));
+        log.info(
+                "BUILD_ROAD success gameId={} playerId={} commandId={} vertices={}",
+                gameId,
+                command.playerId(),
+                command.commandId(),
+                path.size()
+        );
+    }
+
     private boolean isValidBuildTile(BuildingType buildingType, TileCoordinate coordinate) {
         WorldSnapshot world = simulator.snapshot();
         int x = coordinate.x();
@@ -369,5 +427,22 @@ public final class GameSession {
         } catch (IllegalArgumentException ignored) {
             return null;
         }
+    }
+
+    private List<RoadVertexCoordinate> parseRoadPath(Map<String, String> payload) {
+        Integer vertexCount = parseCoordinate(payload.get("vertexCount"));
+        if (vertexCount == null || vertexCount < 2) {
+            return List.of();
+        }
+        List<RoadVertexCoordinate> path = new ArrayList<>(vertexCount);
+        for (int i = 0; i < vertexCount; i++) {
+            Integer x = parseCoordinate(payload.get("vx" + i));
+            Integer y = parseCoordinate(payload.get("vy" + i));
+            if (x == null || y == null) {
+                return List.of();
+            }
+            path.add(new RoadVertexCoordinate(x, y));
+        }
+        return List.copyOf(path);
     }
 }
