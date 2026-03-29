@@ -37,8 +37,8 @@ public final class BuildingRules {
 
     public static String yieldDescription(BuildingType buildingType) {
         return switch (buildingType) {
-            case LUMBERJACK -> "+1 Holz / Tick";
-            case QUARRY -> "+1 Stein / Tick";
+            case LUMBERJACK -> "Produziert Holz je nach Waldanteil";
+            case QUARRY -> "Produziert Stein je nach Berganteil";
             default -> "-";
         };
     }

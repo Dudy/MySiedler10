@@ -3,6 +3,7 @@ package de.podolak.games.siedler.client.viewmodel;
 import de.podolak.games.siedler.client.net.ServerApiClient;
 import de.podolak.games.siedler.shared.command.CommandType;
 import de.podolak.games.siedler.shared.command.PlayerCommand;
+import de.podolak.games.siedler.shared.model.BuildingProductionRules;
 import de.podolak.games.siedler.shared.model.BuildingRules;
 import de.podolak.games.siedler.shared.model.BuildingState;
 import de.podolak.games.siedler.shared.model.BuildingType;
@@ -17,6 +18,7 @@ import de.podolak.games.siedler.shared.model.TerrainType;
 import de.podolak.games.siedler.shared.model.WorldSnapshot;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.beans.PropertyChangeListener;
@@ -26,6 +28,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.LongSupplier;
 
 @Component
 public final class GameViewModel {
@@ -33,11 +36,20 @@ public final class GameViewModel {
 
     private final PropertyChangeSupport propertyChangeSupport = new PropertyChangeSupport(this);
     private final ServerApiClient serverApiClient;
+    private final LongSupplier currentTimeMillisSupplier;
     private volatile GameStateSnapshot snapshot;
     private volatile String localPlayerId;
+    private volatile long lastSnapshotServerSecond;
+    private volatile long lastSnapshotReceivedAtMillis;
 
+    @Autowired
     public GameViewModel(ServerApiClient serverApiClient) {
+        this(serverApiClient, System::currentTimeMillis);
+    }
+
+    GameViewModel(ServerApiClient serverApiClient, LongSupplier currentTimeMillisSupplier) {
         this.serverApiClient = serverApiClient;
+        this.currentTimeMillisSupplier = currentTimeMillisSupplier;
     }
 
     public GameStateSnapshot snapshot() {
@@ -48,15 +60,18 @@ public final class GameViewModel {
         GameStateSnapshot oldSnapshot = this.snapshot;
         this.snapshot = snapshot;
         if (snapshot != null) {
+            lastSnapshotServerSecond = snapshot.serverSecond();
+            lastSnapshotReceivedAtMillis = currentTimeMillisSupplier.getAsLong();
             int tick = snapshot.world() == null ? -1 : snapshot.world().tick();
             int players = snapshot.players() == null ? -1 : snapshot.players().size();
             int buildings = snapshot.world() == null || snapshot.world().buildings() == null
                     ? -1
                     : snapshot.world().buildings().size();
             log.debug(
-                    "Snapshot updated gameId={} tick={} players={} buildings={}",
+                    "Snapshot updated gameId={} tick={} serverSecond={} players={} buildings={}",
                     snapshot.gameId(),
                     tick,
+                    snapshot.serverSecond(),
                     players,
                     buildings
             );
@@ -70,6 +85,33 @@ public final class GameViewModel {
 
     public String localPlayerId() {
         return localPlayerId;
+    }
+
+    public long estimatedServerSecond() {
+        GameStateSnapshot activeSnapshot = snapshot;
+        if (activeSnapshot == null) {
+            return -1L;
+        }
+        long elapsedMillis = Math.max(0L, currentTimeMillisSupplier.getAsLong() - lastSnapshotReceivedAtMillis);
+        return lastSnapshotServerSecond + (elapsedMillis / 1000L);
+    }
+
+    public BuildingState estimatedBuildingState(TileCoordinate coordinate) {
+        GameStateSnapshot activeSnapshot = snapshot;
+        if (activeSnapshot == null || activeSnapshot.world() == null || coordinate == null) {
+            return null;
+        }
+
+        BuildingState building = buildingAt(activeSnapshot.world(), coordinate);
+        if (building == null) {
+            return null;
+        }
+
+        int elapsedTicks = elapsedTicksSinceSnapshot(activeSnapshot);
+        if (elapsedTicks <= 0) {
+            return building;
+        }
+        return BuildingProductionRules.advanceBuilding(activeSnapshot.world(), building, elapsedTicks);
     }
 
     public void setLocalPlayerId(String localPlayerId) {
@@ -289,6 +331,7 @@ public final class GameViewModel {
         return new GameStateSnapshot(
                 activeSnapshot.gameId(),
                 activeSnapshot.serverTime(),
+                activeSnapshot.serverSecond(),
                 activeSnapshot.config(),
                 List.copyOf(players),
                 updatedWorld
@@ -320,6 +363,7 @@ public final class GameViewModel {
         return new GameStateSnapshot(
                 activeSnapshot.gameId(),
                 activeSnapshot.serverTime(),
+                activeSnapshot.serverSecond(),
                 activeSnapshot.config(),
                 activeSnapshot.players(),
                 updatedWorld
@@ -360,5 +404,22 @@ public final class GameViewModel {
             }
         }
         return TerrainType.GRASSLAND;
+    }
+
+    private int elapsedTicksSinceSnapshot(GameStateSnapshot activeSnapshot) {
+        if (activeSnapshot.config() == null || activeSnapshot.config().tickDurationMillis() <= 0) {
+            return 0;
+        }
+        long elapsedMillis = Math.max(0L, currentTimeMillisSupplier.getAsLong() - lastSnapshotReceivedAtMillis);
+        return (int) (elapsedMillis / activeSnapshot.config().tickDurationMillis());
+    }
+
+    private BuildingState buildingAt(WorldSnapshot world, TileCoordinate coordinate) {
+        for (BuildingState building : world.buildings()) {
+            if (building.coordinate().equals(coordinate)) {
+                return building;
+            }
+        }
+        return null;
     }
 }

@@ -31,6 +31,7 @@ import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.LongSupplier;
 
 public final class GameSession {
     private static final Logger log = LoggerFactory.getLogger(GameSession.class);
@@ -42,6 +43,7 @@ public final class GameSession {
     private final List<TileCoordinate> availableStartPositions;
     private final WorldSimulator simulator;
     private final WorldUpdatePublisher updatePublisher;
+    private final LongSupplier serverSecondSupplier;
 
     private volatile int tick;
     private volatile String lastJoinedPlayerId;
@@ -53,7 +55,8 @@ public final class GameSession {
             List<PlayerState> players,
             List<TileCoordinate> availableStartPositions,
             WorldSimulator simulator,
-            WorldUpdatePublisher updatePublisher
+            WorldUpdatePublisher updatePublisher,
+            LongSupplier serverSecondSupplier
     ) {
         this.gameId = gameId;
         this.config = config;
@@ -62,9 +65,19 @@ public final class GameSession {
         this.availableStartPositions = availableStartPositions;
         this.simulator = simulator;
         this.updatePublisher = updatePublisher;
+        this.serverSecondSupplier = serverSecondSupplier;
     }
 
     public static GameSession create(String hostPlayerName, GameConfig config, WorldUpdatePublisher updatePublisher) {
+        return create(hostPlayerName, config, updatePublisher, () -> 0L);
+    }
+
+    static GameSession create(
+            String hostPlayerName,
+            GameConfig config,
+            WorldUpdatePublisher updatePublisher,
+            LongSupplier serverSecondSupplier
+    ) {
         String gameId = UUID.randomUUID().toString();
         List<PlayerState> players = new ArrayList<>();
         String hostPlayerId = UUID.randomUUID().toString();
@@ -80,7 +93,8 @@ public final class GameSession {
                 players,
                 availableStartPositions,
                 new WorldSimulator(initialWorld),
-                updatePublisher
+                updatePublisher,
+                serverSecondSupplier
         );
         session.spawnHeadquarters(hostPlayerId);
         session.lastJoinedPlayerId = hostPlayerId;
@@ -98,6 +112,7 @@ public final class GameSession {
         spawnHeadquarters(playerId);
         lastJoinedPlayerId = playerId;
         log.info("Player added gameId={} playerId={} name={} color={}", gameId, playerId, playerName, color);
+        publishSnapshot();
         return this;
     }
 
@@ -127,7 +142,13 @@ public final class GameSession {
             log.debug("Tick gameId={} tick={} processingCommands=0", gameId, tick);
         }
         applyPendingCommands(commands);
-        simulator.advanceTick(tick);
+        boolean productionChanged = simulator.advanceTick(tick);
+        if (!commands.isEmpty() || productionChanged) {
+            publishSnapshot();
+        }
+    }
+
+    public synchronized void publishSnapshot() {
         updatePublisher.publish(new TickUpdateMessage(gameId, tick, snapshot()));
     }
 
@@ -144,7 +165,14 @@ public final class GameSession {
     }
 
     public GameStateSnapshot snapshot() {
-        return new GameStateSnapshot(gameId, Instant.now(), config, List.copyOf(players), simulator.snapshot());
+        return new GameStateSnapshot(
+                gameId,
+                Instant.now(),
+                serverSecondSupplier.getAsLong(),
+                config,
+                List.copyOf(players),
+                simulator.snapshot()
+        );
     }
 
     public GameConfig config() {

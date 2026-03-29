@@ -1,6 +1,7 @@
 package de.podolak.games.siedler.client.ui;
 
 import de.podolak.games.siedler.client.viewmodel.GameViewModel;
+import de.podolak.games.siedler.shared.model.BuildingProductionRules;
 import de.podolak.games.siedler.shared.model.BuildingRules;
 import de.podolak.games.siedler.shared.model.BuildingState;
 import de.podolak.games.siedler.shared.model.BuildingType;
@@ -44,7 +45,7 @@ public final class LandPanel extends JPanel {
     private static final Logger log = LoggerFactory.getLogger(LandPanel.class);
 
     private static final int HEX_SIZE = 18;
-    private static final int INFLUENCE_RADIUS = 3;
+    private static final int INFLUENCE_RADIUS = BuildingProductionRules.INFLUENCE_RADIUS;
     private static final double MIN_ZOOM = 1.0;
     private static final double MAX_ZOOM = 5.0;
     private static final double HEX_WIDTH = Math.sqrt(3) * HEX_SIZE;
@@ -81,6 +82,7 @@ public final class LandPanel extends JPanel {
             updatePreferredSize((GameStateSnapshot) event.getNewValue());
             validateHoveredTile();
             validateSelectedBuildingTile();
+            refreshSelectedBuildingSelection();
             validateRoadDraftState();
             repaint();
         }));
@@ -642,6 +644,20 @@ public final class LandPanel extends JPanel {
         if (snapshot == null || buildingAt(snapshot.world(), selectedBuildingTile) == null) {
             selectedBuildingTile = null;
             notifyBuildingSelection(null);
+        }
+    }
+
+    private void refreshSelectedBuildingSelection() {
+        if (selectedBuildingTile == null || selectedBuildingType != null) {
+            return;
+        }
+        GameStateSnapshot snapshot = viewModel.snapshot();
+        if (snapshot == null || snapshot.world() == null) {
+            return;
+        }
+        BuildingState building = buildingAt(snapshot.world(), selectedBuildingTile);
+        if (building != null) {
+            notifyBuildingSelection(building);
         }
     }
 

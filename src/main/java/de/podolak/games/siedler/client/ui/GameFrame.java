@@ -1,11 +1,13 @@
 package de.podolak.games.siedler.client.ui;
 
 import de.podolak.games.siedler.client.viewmodel.GameViewModel;
+import de.podolak.games.siedler.shared.model.BuildingProductionRules;
 import de.podolak.games.siedler.shared.model.BuildingRules;
 import de.podolak.games.siedler.shared.model.BuildingState;
 import de.podolak.games.siedler.shared.model.BuildingType;
 import de.podolak.games.siedler.shared.model.GameStateSnapshot;
 import de.podolak.games.siedler.shared.model.PlayerState;
+import de.podolak.games.siedler.shared.model.ResourceType;
 import de.podolak.games.siedler.shared.model.TileCoordinate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +23,8 @@ import javax.swing.JRadioButton;
 import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 import javax.swing.JToggleButton;
+import javax.swing.SwingConstants;
+import javax.swing.Timer;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
@@ -35,7 +39,10 @@ import java.awt.event.MouseWheelEvent;
 import java.awt.event.MouseWheelListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 public final class GameFrame {
     private static final Logger log = LoggerFactory.getLogger(GameFrame.class);
@@ -49,13 +56,17 @@ public final class GameFrame {
     private final JLabel selectedBuildingLabel;
     private final JLabel buildingCostLabel;
     private final JLabel buildingYieldLabel;
+    private final JLabel buildingStorageLabel;
+    private final JLabel buildingCountdownLabel;
     private final ButtonGroup buildingButtonGroup;
     private final JToggleButton roadModeToggle;
     private final JButton finishRoadButton;
     private final JButton cancelRoadButton;
+    private final Timer uiClockTimer;
     private final int horizontalStep;
     private final int verticalStep;
     private volatile boolean centeredOnHeadquarters;
+    private volatile TileCoordinate selectedBuildingCoordinate;
 
     public GameFrame(GameViewModel viewModel) {
         this.viewModel = viewModel;
@@ -66,6 +77,7 @@ public final class GameFrame {
         resourcesLabel = new JLabel("Holz: -   Steine: -");
         resourcesLabel.setFont(resourcesLabel.getFont().deriveFont(Font.PLAIN, 12f));
         resourcesLabel.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10));
+        resourcesLabel.setHorizontalAlignment(SwingConstants.RIGHT);
 
         landPanel = new LandPanel(viewModel);
         scrollPane = new JScrollPane(landPanel);
@@ -74,6 +86,8 @@ public final class GameFrame {
         selectedBuildingLabel = new JLabel("Kein Gebaeude gewaehlt");
         buildingCostLabel = new JLabel("Kosten: -");
         buildingYieldLabel = new JLabel("Ertrag: -");
+        buildingStorageLabel = new JLabel("Lager: -");
+        buildingCountdownLabel = new JLabel("Naechste Einheit: -");
         buildingButtonGroup = new ButtonGroup();
         roadModeToggle = new JToggleButton("Wegebau AUS");
         finishRoadButton = new JButton("Weg beenden");
@@ -93,15 +107,22 @@ public final class GameFrame {
         verticalStep = LandPanel.verticalStepPixels();
         keyEventDispatcher = createKeyDispatcher();
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(keyEventDispatcher);
+        uiClockTimer = new Timer(100, event -> {
+            updateResourcesLabel();
+            refreshSelectedBuildingDetails();
+        });
+        uiClockTimer.start();
         frame.addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosed(WindowEvent event) {
                 KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(keyEventDispatcher);
+                uiClockTimer.stop();
             }
         });
         viewModel.addSnapshotListener(event -> SwingUtilities.invokeLater(() -> {
             centerOnHeadquartersIfNeeded();
             updateResourcesLabel();
+            refreshSelectedBuildingDetails();
         }));
 
         frame.setSize(1150, 830);
@@ -113,6 +134,7 @@ public final class GameFrame {
         SwingUtilities.invokeLater(() -> {
             centerOnHeadquartersIfNeeded();
             updateResourcesLabel();
+            refreshSelectedBuildingDetails();
         });
     }
 
@@ -147,11 +169,13 @@ public final class GameFrame {
 
         JPanel details = new JPanel();
         details.setLayout(new BoxLayout(details, BoxLayout.Y_AXIS));
-        details.setPreferredSize(new Dimension(250, 90));
+        details.setPreferredSize(new Dimension(320, 130));
         details.setBorder(BorderFactory.createTitledBorder("Gebaeude"));
         details.add(selectedBuildingLabel);
         details.add(buildingCostLabel);
         details.add(buildingYieldLabel);
+        details.add(buildingStorageLabel);
+        details.add(buildingCountdownLabel);
 
         ribbon.add(left, BorderLayout.WEST);
         ribbon.add(middle, BorderLayout.CENTER);
@@ -167,6 +191,7 @@ public final class GameFrame {
 
     private void selectBuildingType(BuildingType buildingType) {
         log.info("Ribbon select buildingType={}", buildingType);
+        selectedBuildingCoordinate = null;
         if (buildingType != null && landPanel.isRoadBuildModeEnabled()) {
             setRoadBuildMode(false);
         }
@@ -176,6 +201,8 @@ public final class GameFrame {
             selectedBuildingLabel.setText("Kein Gebaeude gewaehlt");
             buildingCostLabel.setText("Kosten: -");
             buildingYieldLabel.setText("Ertrag: -");
+            buildingStorageLabel.setText("Lager: -");
+            buildingCountdownLabel.setText("Naechste Einheit: -");
             return;
         }
 
@@ -183,21 +210,22 @@ public final class GameFrame {
         buildingCostLabel.setText("Kosten: Holz " + BuildingRules.woodCost(buildingType)
                 + ", Stein " + BuildingRules.stoneCost(buildingType));
         buildingYieldLabel.setText("Ertrag: " + BuildingRules.yieldDescription(buildingType));
+        buildingStorageLabel.setText("Lager: -");
+        buildingCountdownLabel.setText("Naechste Einheit: -");
     }
 
     private void onExistingBuildingSelected(BuildingState buildingState) {
+        selectedBuildingCoordinate = buildingState == null ? null : buildingState.coordinate();
         if (buildingState == null) {
             selectedBuildingLabel.setText("Kein Gebaeude gewaehlt");
             buildingCostLabel.setText("Kosten: -");
             buildingYieldLabel.setText("Ertrag: -");
+            buildingStorageLabel.setText("Lager: -");
+            buildingCountdownLabel.setText("Naechste Einheit: -");
             return;
         }
-        BuildingType buildingType = buildingState.buildingType();
-        selectedBuildingLabel.setText("Ausgewaehlt: " + labelFor(buildingType)
-                + " (" + buildingState.coordinate().x() + "," + buildingState.coordinate().y() + ")");
-        buildingCostLabel.setText("Kosten: Holz " + BuildingRules.woodCost(buildingType)
-                + ", Stein " + BuildingRules.stoneCost(buildingType));
-        buildingYieldLabel.setText("Ertrag: " + BuildingRules.yieldDescription(buildingType));
+        BuildingState estimatedBuilding = viewModel.estimatedBuildingState(buildingState.coordinate());
+        applyBuildingDetails(estimatedBuilding == null ? buildingState : estimatedBuilding);
     }
 
     private void onBuildingPlaced(boolean keepSelection) {
@@ -334,8 +362,9 @@ public final class GameFrame {
     private void updateResourcesLabel() {
         GameStateSnapshot snapshot = viewModel.snapshot();
         String localPlayerId = viewModel.localPlayerId();
+        long serverSecond = viewModel.estimatedServerSecond();
         if (snapshot == null || localPlayerId == null) {
-            resourcesLabel.setText("Holz: -   Steine: -");
+            resourcesLabel.setText("Holz: -   Steine: -   Sekunde: -");
             return;
         }
 
@@ -344,11 +373,15 @@ public final class GameFrame {
                 .findFirst();
 
         if (player.isEmpty()) {
-            resourcesLabel.setText("Holz: -   Steine: -");
+            resourcesLabel.setText("Holz: -   Steine: -   Sekunde: " + formatServerSecond(serverSecond));
             return;
         }
 
-        resourcesLabel.setText("Holz: " + player.get().wood() + "   Steine: " + player.get().stone());
+        resourcesLabel.setText(
+                "Holz: " + player.get().wood()
+                        + "   Steine: " + player.get().stone()
+                        + "   Sekunde: " + formatServerSecond(serverSecond)
+        );
     }
 
     private KeyEventDispatcher createKeyDispatcher() {
@@ -432,6 +465,88 @@ public final class GameFrame {
         scrollPane.getViewport().setViewPosition(new Point(targetX, targetY));
     }
 
+    private void refreshSelectedBuildingDetails() {
+        TileCoordinate coordinate = selectedBuildingCoordinate;
+        GameStateSnapshot snapshot = viewModel.snapshot();
+        if (coordinate == null || snapshot == null || snapshot.world() == null) {
+            return;
+        }
+
+        for (BuildingState building : snapshot.world().buildings()) {
+            if (building.coordinate().equals(coordinate)) {
+                BuildingState estimatedBuilding = viewModel.estimatedBuildingState(coordinate);
+                applyBuildingDetails(estimatedBuilding == null ? building : estimatedBuilding);
+                return;
+            }
+        }
+
+        selectedBuildingCoordinate = null;
+        selectedBuildingLabel.setText("Kein Gebaeude gewaehlt");
+        buildingCostLabel.setText("Kosten: -");
+        buildingYieldLabel.setText("Ertrag: -");
+        buildingStorageLabel.setText("Lager: -");
+        buildingCountdownLabel.setText("Naechste Einheit: -");
+    }
+
+    private void applyBuildingDetails(BuildingState buildingState) {
+        BuildingType buildingType = buildingState.buildingType();
+        GameStateSnapshot snapshot = viewModel.snapshot();
+        selectedBuildingLabel.setText("Ausgewaehlt: " + labelFor(buildingType)
+                + " (" + buildingState.coordinate().x() + "," + buildingState.coordinate().y() + ")");
+        buildingCostLabel.setText("Kosten: Holz " + BuildingRules.woodCost(buildingType)
+                + ", Stein " + BuildingRules.stoneCost(buildingType));
+        buildingYieldLabel.setText("Ertrag: " + BuildingRules.yieldDescription(buildingType));
+        buildingStorageLabel.setText(storageLabelFor(buildingState));
+        buildingCountdownLabel.setText(countdownLabelFor(snapshot, buildingState));
+    }
+
+    private String storageLabelFor(BuildingState buildingState) {
+        List<String> storedResources = new ArrayList<>();
+        for (ResourceType resourceType : ResourceType.values()) {
+            int amount = buildingState.storedAmount(resourceType);
+            if (amount > 0) {
+                storedResources.add(labelFor(resourceType) + ": " + amount);
+            }
+        }
+        if (storedResources.isEmpty()) {
+            return "Lager: leer";
+        }
+        return "<html>Lager:<br/>" + String.join("<br/>", storedResources) + "</html>";
+    }
+
+    private String countdownLabelFor(GameStateSnapshot snapshot, BuildingState buildingState) {
+        if (snapshot == null || snapshot.world() == null) {
+            return "Naechste Einheit: -";
+        }
+        if (!BuildingProductionRules.producesResource(buildingState.buildingType())) {
+            return "Naechste Einheit: -";
+        }
+
+        OptionalInt remainingTicks = BuildingProductionRules.remainingTicksUntilNextUnit(snapshot.world(), buildingState);
+        if (remainingTicks.isEmpty()) {
+            return "Naechste Einheit: keine Produktion";
+        }
+
+        int ticks = remainingTicks.getAsInt();
+        long tickMillis = snapshot.config() == null ? 200L : snapshot.config().tickDurationMillis();
+        long totalMillis = ticks * tickMillis;
+        return "Naechste Einheit: " + ticks + " Ticks (" + formatDuration(totalMillis) + ")";
+    }
+
+    private String formatDuration(long totalMillis) {
+        if (totalMillis < 1000) {
+            return totalMillis + " ms";
+        }
+
+        long minutes = totalMillis / 60000;
+        long seconds = (totalMillis % 60000) / 1000;
+        long tenths = (totalMillis % 1000) / 100;
+        if (minutes > 0) {
+            return minutes + ":" + String.format("%02d", seconds) + " min";
+        }
+        return seconds + "." + tenths + " s";
+    }
+
     private String labelFor(BuildingType buildingType) {
         return switch (buildingType) {
             case LUMBERJACK -> "Holzfaeller";
@@ -439,5 +554,21 @@ public final class GameFrame {
             case HEADQUARTERS -> "Hauptquartier";
             case ROAD_FLAG -> "Wegflagge";
         };
+    }
+
+    private String labelFor(ResourceType resourceType) {
+        return switch (resourceType) {
+            case WOOD -> "Holz";
+            case STONE -> "Stein";
+            case IRON_ORE -> "Eisenerz";
+            case COAL -> "Kohle";
+            case GOLD -> "Gold";
+            case WATER -> "Wasser";
+            case FOOD -> "Nahrung";
+        };
+    }
+
+    private String formatServerSecond(long serverSecond) {
+        return serverSecond < 0 ? "-" : Long.toString(serverSecond);
     }
 }

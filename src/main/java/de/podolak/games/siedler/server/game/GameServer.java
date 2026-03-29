@@ -18,6 +18,7 @@ public final class GameServer {
     private final Map<String, GameSession> sessions = new ConcurrentHashMap<>();
     private final WorldUpdatePublisher updatePublisher;
     private final TaskScheduler taskScheduler;
+    private final long startedAtNanos = System.nanoTime();
 
     public GameServer(WorldUpdatePublisher updatePublisher, TaskScheduler taskScheduler) {
         this.updatePublisher = updatePublisher;
@@ -29,7 +30,7 @@ public final class GameServer {
     }
 
     public GameSession createSession(String hostPlayerName, GameConfig config) {
-        GameSession session = GameSession.create(hostPlayerName, config, updatePublisher);
+        GameSession session = GameSession.create(hostPlayerName, config, updatePublisher, this::currentServerSecond);
         sessions.put(session.gameId(), session);
         log.info(
                 "Created session gameId={} host={} map={}x{} tickMs={} maxPlayers={}",
@@ -41,6 +42,7 @@ public final class GameServer {
                 config.maxPlayers()
         );
         taskScheduler.scheduleAtFixedRate(session::advanceOneTick, Duration.ofMillis(config.tickDurationMillis()));
+        taskScheduler.scheduleAtFixedRate(session::publishSnapshot, Duration.ofSeconds(10));
         log.info("Scheduled tick loop for gameId={}", session.gameId());
         return session;
     }
@@ -59,5 +61,9 @@ public final class GameServer {
             throw new IllegalArgumentException("Unknown game id: " + gameId);
         }
         return session;
+    }
+
+    private long currentServerSecond() {
+        return Duration.ofNanos(System.nanoTime() - startedAtNanos).toSeconds();
     }
 }
