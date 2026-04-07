@@ -99,7 +99,6 @@ public final class LandPanel extends JPanel {
                     updateHoveredRoadTarget(event.getPoint());
                     return;
                 }
-                updateHoveredRoadVertex(event.getPoint(), false);
                 updateHoveredTile(event.getPoint());
             }
 
@@ -322,7 +321,7 @@ public final class LandPanel extends JPanel {
 
     private void drawRoads(Graphics2D graphics2D, WorldSnapshot world) {
         for (RoadState road : world.roads()) {
-            drawRoadPath(graphics2D, road.path(), new Color(124, 88, 46), new Color(71, 47, 23), 7f, 3.5f);
+            drawBuiltRoadPath(graphics2D, road.path());
         }
     }
 
@@ -343,25 +342,19 @@ public final class LandPanel extends JPanel {
     }
 
     private void drawRoadPreviewVertex(Graphics2D graphics2D) {
+        if (!roadBuildModeEnabled) {
+            return;
+        }
         RoadVertexCoordinate previewVertex = previewRoadVertex();
         if (previewVertex == null) {
             return;
         }
         Point center = roadVertexPixels(previewVertex);
-        if (roadBuildModeEnabled) {
-            graphics2D.setColor(new Color(150, 218, 255, 220));
-            graphics2D.fillOval(center.x - 5, center.y - 5, 10, 10);
-            graphics2D.setColor(new Color(30, 92, 152, 230));
-            graphics2D.setStroke(new BasicStroke(1.8f));
-            graphics2D.drawOval(center.x - 6, center.y - 6, 12, 12);
-            return;
-        }
-
-        graphics2D.setColor(new Color(229, 244, 255, 120));
-        graphics2D.fillOval(center.x - 4, center.y - 4, 8, 8);
-        graphics2D.setColor(new Color(89, 143, 186, 180));
-        graphics2D.setStroke(new BasicStroke(1.4f));
-        graphics2D.drawOval(center.x - 5, center.y - 5, 10, 10);
+        graphics2D.setColor(new Color(150, 218, 255, 220));
+        graphics2D.fillOval(center.x - 5, center.y - 5, 10, 10);
+        graphics2D.setColor(new Color(30, 92, 152, 230));
+        graphics2D.setStroke(new BasicStroke(1.8f));
+        graphics2D.drawOval(center.x - 6, center.y - 6, 12, 12);
     }
 
     private RoadVertexCoordinate previewRoadVertex() {
@@ -392,6 +385,88 @@ public final class LandPanel extends JPanel {
             graphics2D.setStroke(new BasicStroke(outlineWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             graphics2D.drawLine(start.x, start.y, end.x, end.y);
         }
+    }
+
+    private void drawBuiltRoadPath(Graphics2D graphics2D, List<RoadVertexCoordinate> path) {
+        if (path == null || path.size() < 2) {
+            return;
+        }
+        Color baseShadow = new Color(70, 48, 28, 210);
+        Color baseEarth = new Color(121, 92, 57, 235);
+        Color gravel = new Color(154, 137, 104, 235);
+        Color highlight = new Color(198, 186, 156, 200);
+
+        for (int i = 1; i < path.size(); i++) {
+            Point start = roadVertexPixels(path.get(i - 1));
+            Point end = roadVertexPixels(path.get(i));
+
+            graphics2D.setColor(baseShadow);
+            graphics2D.setStroke(new BasicStroke(8.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            graphics2D.drawLine(start.x, start.y, end.x, end.y);
+
+            graphics2D.setColor(baseEarth);
+            graphics2D.setStroke(new BasicStroke(6.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            graphics2D.drawLine(start.x, start.y, end.x, end.y);
+
+            graphics2D.setColor(gravel);
+            graphics2D.setStroke(new BasicStroke(4.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            graphics2D.drawLine(start.x, start.y, end.x, end.y);
+
+            graphics2D.setColor(highlight);
+            graphics2D.setStroke(new BasicStroke(2.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            graphics2D.drawLine(start.x, start.y, end.x, end.y);
+
+            drawRoadGravel(graphics2D, start, end);
+        }
+    }
+
+    private void drawRoadGravel(Graphics2D graphics2D, Point start, Point end) {
+        double dx = end.x - start.x;
+        double dy = end.y - start.y;
+        double length = Math.hypot(dx, dy);
+        if (length < 1.0) {
+            return;
+        }
+
+        double ux = dx / length;
+        double uy = dy / length;
+        double px = -uy;
+        double py = ux;
+        int stones = Math.max(2, (int) Math.floor(length / 7.0));
+
+        for (int i = 0; i <= stones; i++) {
+            double t = stones == 0 ? 0.0 : (double) i / stones;
+            long seed = gravelSeed(start, end, i);
+            double alongJitter = signedUnit(seed) * 1.6;
+            double acrossJitter = signedUnit(seed >>> 8) * 1.8;
+            int size = 2 + (int) Math.floor(unit(seed >>> 16) * 2.0);
+            int x = (int) Math.round(start.x + dx * t + ux * alongJitter + px * acrossJitter);
+            int y = (int) Math.round(start.y + dy * t + uy * alongJitter + py * acrossJitter);
+
+            graphics2D.setColor(unit(seed >>> 24) > 0.45
+                    ? new Color(212, 203, 179, 165)
+                    : new Color(118, 102, 78, 150));
+            graphics2D.fillOval(x - size / 2, y - size / 2, size, size);
+        }
+    }
+
+    private long gravelSeed(Point start, Point end, int index) {
+        long seed = 17L;
+        seed = seed * 31 + start.x;
+        seed = seed * 31 + start.y;
+        seed = seed * 31 + end.x;
+        seed = seed * 31 + end.y;
+        seed = seed * 31 + index;
+        return seed;
+    }
+
+    private double unit(long seed) {
+        long mixed = seed * 1103515245L + 12345L;
+        return (double) (mixed & 0xffffL) / 65535.0;
+    }
+
+    private double signedUnit(long seed) {
+        return unit(seed) * 2.0 - 1.0;
     }
 
     private void drawHoveredTile(Graphics2D graphics2D, WorldSnapshot world) {
@@ -774,7 +849,9 @@ public final class LandPanel extends JPanel {
             if (roadBuildModeEnabled) {
                 updateHoveredRoadTarget(lastMousePoint);
             } else {
-                updateHoveredRoadVertex(lastMousePoint, false);
+                if (hoveredRoadVertex != null) {
+                    hoveredRoadVertex = null;
+                }
             }
         }
     }
