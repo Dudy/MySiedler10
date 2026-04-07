@@ -6,6 +6,7 @@ import de.podolak.games.siedler.shared.model.BuildingRules;
 import de.podolak.games.siedler.shared.model.BuildingState;
 import de.podolak.games.siedler.shared.model.BuildingType;
 import de.podolak.games.siedler.shared.model.GameStateSnapshot;
+import de.podolak.games.siedler.shared.model.MapDimensions;
 import de.podolak.games.siedler.shared.model.RoadEdge;
 import de.podolak.games.siedler.shared.model.RoadGeometry;
 import de.podolak.games.siedler.shared.model.RoadRules;
@@ -52,6 +53,8 @@ public final class LandPanel extends JPanel {
     private static final double HEX_HEIGHT = 2.0 * HEX_SIZE;
     private static final double HORIZONTAL_SPACING = HEX_WIDTH;
     private static final double VERTICAL_SPACING = HEX_HEIGHT * 0.75;
+    private static final double ROAD_VERTEX_SELECTION_RADIUS = HEX_SIZE * 1.15;
+    private static final int ROAD_VERTEX_SEARCH_RADIUS = 2;
 
     private final GameViewModel viewModel;
     private final HexTileSpriteFactory tileSpriteFactory;
@@ -65,6 +68,7 @@ public final class LandPanel extends JPanel {
     private volatile RoadBuildStateListener roadBuildStateListener;
     private volatile boolean roadBuildModeEnabled;
     private volatile RoadVertexCoordinate activeRoadVertex;
+    private volatile RoadVertexCoordinate hoveredRoadVertex;
     private volatile RoadEdge hoveredRoadEdge;
     private volatile List<RoadVertexCoordinate> draftRoadPath = List.of();
     private volatile Point lastMousePoint;
@@ -92,9 +96,10 @@ public final class LandPanel extends JPanel {
             public void mouseMoved(MouseEvent event) {
                 lastMousePoint = event.getPoint();
                 if (roadBuildModeEnabled) {
-                    updateHoveredRoadEdge(event.getPoint());
+                    updateHoveredRoadTarget(event.getPoint());
                     return;
                 }
+                updateHoveredRoadVertex(event.getPoint(), false);
                 updateHoveredTile(event.getPoint());
             }
 
@@ -108,6 +113,10 @@ public final class LandPanel extends JPanel {
                 }
                 if (hoveredRoadEdge != null) {
                     hoveredRoadEdge = null;
+                    needsRepaint = true;
+                }
+                if (hoveredRoadVertex != null) {
+                    hoveredRoadVertex = null;
                     needsRepaint = true;
                 }
                 if (needsRepaint) {
@@ -188,7 +197,7 @@ public final class LandPanel extends JPanel {
         drawHoveredTile(graphics2D, world);
         drawRoads(graphics2D, world);
         drawDraftRoad(graphics2D);
-        drawActiveRoadVertex(graphics2D);
+        drawRoadPreviewVertex(graphics2D);
         drawBuildings(graphics2D, world);
         graphics2D.dispose();
     }
@@ -215,6 +224,7 @@ public final class LandPanel extends JPanel {
         if (roadBuildModeEnabled == enabled) {
             return;
         }
+        log.info("UI road build mode {}", enabled ? "enabled" : "disabled");
         roadBuildModeEnabled = enabled;
         if (!enabled) {
             clearRoadDraftState();
@@ -222,6 +232,9 @@ public final class LandPanel extends JPanel {
             hoveredTile = null;
             selectedBuildingTile = null;
             notifyBuildingSelection(null);
+            if (lastMousePoint != null) {
+                updateHoveredRoadVertex(lastMousePoint, true);
+            }
         }
         updateCursor();
         notifyRoadBuildStateChanged();
@@ -266,7 +279,7 @@ public final class LandPanel extends JPanel {
     }
 
     public double setZoomLevel(double requestedZoomLevel) {
-        double clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, requestedZoomLevel));
+        double clamped = Math.clamp(requestedZoomLevel, MIN_ZOOM, MAX_ZOOM);
         if (Math.abs(clamped - zoomLevel) < 0.0001) {
             return zoomLevel;
         }
@@ -329,16 +342,33 @@ public final class LandPanel extends JPanel {
         }
     }
 
-    private void drawActiveRoadVertex(Graphics2D graphics2D) {
-        if (activeRoadVertex == null) {
+    private void drawRoadPreviewVertex(Graphics2D graphics2D) {
+        RoadVertexCoordinate previewVertex = previewRoadVertex();
+        if (previewVertex == null) {
             return;
         }
-        Point center = roadVertexPixels(activeRoadVertex);
-        graphics2D.setColor(new Color(29, 73, 222, 235));
+        Point center = roadVertexPixels(previewVertex);
+        if (roadBuildModeEnabled) {
+            graphics2D.setColor(new Color(150, 218, 255, 220));
+            graphics2D.fillOval(center.x - 5, center.y - 5, 10, 10);
+            graphics2D.setColor(new Color(30, 92, 152, 230));
+            graphics2D.setStroke(new BasicStroke(1.8f));
+            graphics2D.drawOval(center.x - 6, center.y - 6, 12, 12);
+            return;
+        }
+
+        graphics2D.setColor(new Color(229, 244, 255, 120));
         graphics2D.fillOval(center.x - 4, center.y - 4, 8, 8);
-        graphics2D.setColor(new Color(210, 230, 255, 230));
-        graphics2D.setStroke(new BasicStroke(1.6f));
+        graphics2D.setColor(new Color(89, 143, 186, 180));
+        graphics2D.setStroke(new BasicStroke(1.4f));
         graphics2D.drawOval(center.x - 5, center.y - 5, 10, 10);
+    }
+
+    private RoadVertexCoordinate previewRoadVertex() {
+        if (activeRoadVertex != null) {
+            return hoveredRoadEdge == null ? null : hoveredRoadEdge.other(activeRoadVertex);
+        }
+        return hoveredRoadVertex;
     }
 
     private void drawRoadPath(
@@ -492,11 +522,12 @@ public final class LandPanel extends JPanel {
             return;
         }
         if (activeRoadVertex == null) {
-            RoadVertexCoordinate selectedVertex = roadVertexAt(event.getPoint());
+            RoadVertexCoordinate selectedVertex = hoveredRoadVertex != null ? hoveredRoadVertex : roadVertexAt(event.getPoint());
             if (selectedVertex == null) {
                 return;
             }
             activeRoadVertex = selectedVertex;
+            hoveredRoadVertex = null;
             draftRoadPath = List.of(selectedVertex);
             hoveredRoadEdge = null;
             updateHoveredRoadEdge(event.getPoint());
@@ -564,6 +595,45 @@ public final class LandPanel extends JPanel {
         repaint();
     }
 
+    private void updateHoveredRoadVertex(Point point, boolean roadModePreview) {
+        if (activeRoadVertex != null) {
+            if (hoveredRoadVertex != null) {
+                hoveredRoadVertex = null;
+                repaint();
+            }
+            return;
+        }
+        GameStateSnapshot snapshot = viewModel.snapshot();
+        if (snapshot == null) {
+            return;
+        }
+        RoadVertexCoordinate nextHovered = nearestRoadVertex(snapshot.world().dimensions(), toWorldPoint(point));
+        if ((nextHovered == null && hoveredRoadVertex == null)
+                || (nextHovered != null && nextHovered.equals(hoveredRoadVertex))) {
+            return;
+        }
+        hoveredRoadVertex = nextHovered;
+        if (roadModePreview && nextHovered != null) {
+            log.debug("UI road start preview at={},{}", nextHovered.x(), nextHovered.y());
+        }
+        repaint();
+    }
+
+    private void updateHoveredRoadTarget(Point point) {
+        if (activeRoadVertex == null) {
+            updateHoveredRoadVertex(point, true);
+            if (hoveredRoadEdge != null) {
+                hoveredRoadEdge = null;
+                repaint();
+            }
+            return;
+        }
+        if (hoveredRoadVertex != null) {
+            hoveredRoadVertex = null;
+        }
+        updateHoveredRoadEdge(point);
+    }
+
     private TileCoordinate tileAt(Point point) {
         GameStateSnapshot snapshot = viewModel.snapshot();
         if (snapshot == null) {
@@ -599,23 +669,40 @@ public final class LandPanel extends JPanel {
         if (snapshot == null) {
             return null;
         }
-        TileCoordinate tile = tileAt(point);
-        if (tile == null) {
+        return nearestRoadVertex(snapshot.world().dimensions(), toWorldPoint(point));
+    }
+
+    static RoadVertexCoordinate nearestRoadVertex(MapDimensions dimensions, Point worldPoint) {
+        if (dimensions == null || worldPoint == null) {
             return null;
         }
-        Point worldPoint = toWorldPoint(point);
         RoadVertexCoordinate nearest = null;
         double bestDistanceSquared = Double.MAX_VALUE;
-        for (RoadVertexCoordinate candidate : RoadGeometry.verticesForTile(tile)) {
-            Point candidatePoint = roadVertexPixels(candidate);
-            double distanceSquared = candidatePoint.distanceSq(worldPoint);
-            if (distanceSquared < bestDistanceSquared) {
-                bestDistanceSquared = distanceSquared;
-                nearest = candidate;
+        double estimatedVertexX = worldPoint.x / (HEX_WIDTH / 2.0);
+        double estimatedVertexY = worldPoint.y / (HEX_SIZE / 2.0);
+        int baseVertexX = (int) Math.round(estimatedVertexX);
+        int baseVertexY = (int) Math.round(estimatedVertexY);
+
+        for (int candidateY = baseVertexY - ROAD_VERTEX_SEARCH_RADIUS;
+                candidateY <= baseVertexY + ROAD_VERTEX_SEARCH_RADIUS;
+                candidateY++) {
+            for (int candidateX = baseVertexX - ROAD_VERTEX_SEARCH_RADIUS;
+                    candidateX <= baseVertexX + ROAD_VERTEX_SEARCH_RADIUS;
+                    candidateX++) {
+                RoadVertexCoordinate candidate = new RoadVertexCoordinate(candidateX, candidateY);
+                if (!RoadGeometry.isValidVertex(dimensions, candidate)) {
+                    continue;
+                }
+                double distanceSquared = roadVertexPixels(candidate).distanceSq(worldPoint);
+                if (distanceSquared < bestDistanceSquared) {
+                    bestDistanceSquared = distanceSquared;
+                    nearest = candidate;
+                }
             }
         }
-        double selectionRadius = Math.pow(HEX_SIZE * 0.85, 2);
-        return bestDistanceSquared <= selectionRadius ? nearest : null;
+
+        double selectionRadiusSquared = Math.pow(ROAD_VERTEX_SELECTION_RADIUS, 2);
+        return bestDistanceSquared <= selectionRadiusSquared ? nearest : null;
     }
 
     private void validateHoveredTile() {
@@ -683,8 +770,12 @@ public final class LandPanel extends JPanel {
             notifyRoadBuildStateChanged();
             return;
         }
-        if (activeRoadVertex != null && lastMousePoint != null) {
-            updateHoveredRoadEdge(lastMousePoint);
+        if (lastMousePoint != null) {
+            if (roadBuildModeEnabled) {
+                updateHoveredRoadTarget(lastMousePoint);
+            } else {
+                updateHoveredRoadVertex(lastMousePoint, false);
+            }
         }
     }
 
@@ -836,6 +927,7 @@ public final class LandPanel extends JPanel {
     private void clearRoadDraftState() {
         draftRoadPath = List.of();
         activeRoadVertex = null;
+        hoveredRoadVertex = null;
         hoveredRoadEdge = null;
     }
 

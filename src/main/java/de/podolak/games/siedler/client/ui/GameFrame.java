@@ -245,6 +245,7 @@ public final class GameFrame {
     }
 
     private void setRoadBuildMode(boolean enabled) {
+        log.info("Ribbon road build mode toggle requested enabled={}", enabled);
         roadModeToggle.setSelected(enabled);
         roadModeToggle.setText(enabled ? "Wegebau EIN" : "Wegebau AUS");
         if (enabled) {
@@ -252,6 +253,7 @@ public final class GameFrame {
             selectBuildingType(null);
         }
         landPanel.setRoadBuildModeEnabled(enabled);
+        log.info("Ribbon road build mode toggle applied enabled={}", enabled);
     }
 
     private MouseWheelListener createZoomListener() {
